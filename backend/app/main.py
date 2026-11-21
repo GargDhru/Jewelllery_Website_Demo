@@ -1,13 +1,19 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+import os
+from pathlib import Path
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import init_db
 from app.api import (
     auth, categories, products, cart, orders, coupons, reviews, banners, admin
 )
+
+# Path where the built React frontend lives (relative to backend/ root)
+STATIC_DIR = Path(__file__).parent.parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -26,7 +32,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS setup - support local development and production domains (including Render subdomains)
+# CORS setup (kept for local dev; in production same-origin requests don't need it)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.get_cors_origins(),
@@ -36,7 +42,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include Routers
+# ── API Routers (must come BEFORE the static-file catch-all) ──────────────────
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(categories.router, prefix=settings.API_V1_STR)
 app.include_router(products.router, prefix=settings.API_V1_STR)
@@ -55,16 +61,35 @@ async def health_check():
         "version": settings.VERSION
     }
 
-@app.get("/")
-async def root():
-    return {
-        "brand": "AURA ATELIER",
-        "tagline": "Handcrafted Luxury Jewellery & Modern Elegance",
-        "docs": "/docs",
-        "health": "/api/health"
-    }
+# ── Serve built React frontend ─────────────────────────────────────────────────
+# Mount /assets and other static asset folders from the dist build
+if STATIC_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="assets")
+
+    @app.get("/favicon.svg")
+    async def favicon():
+        return FileResponse(str(STATIC_DIR / "favicon.svg"))
+
+    # SPA catch-all: any non-API route serves index.html so React Router works
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str, request: Request):
+        index = STATIC_DIR / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+        return JSONResponse({"detail": "Frontend not built"}, status_code=404)
+else:
+    # Static dir not present (local backend-only dev)
+    @app.get("/")
+    async def root():
+        return {
+            "brand": "AURA ATELIER",
+            "tagline": "Handcrafted Luxury Jewellery & Modern Elegance",
+            "docs": "/docs",
+            "health": "/api/health"
+        }
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+
 
