@@ -11,13 +11,18 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    host: '0.0.0.0',
+    port: parseInt(process.env.PORT || '5173', 10),
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: process.env.VITE_API_URL || 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },
+  },
+  preview: {
+    host: '0.0.0.0',
+    port: parseInt(process.env.PORT || '4173', 10),
   },
 });
 
