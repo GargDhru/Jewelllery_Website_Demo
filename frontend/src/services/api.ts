@@ -241,5 +241,9 @@ export const adminApi = {
     });
     return res.data;
   },
+  deleteCustomer: async (id: string) => {
+    const res = await api.delete(`/admin/customers/${id}`);
+    return res.data;
+  },
 };
 

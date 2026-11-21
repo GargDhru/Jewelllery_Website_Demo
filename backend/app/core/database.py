@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 
 from app.core.config import settings
 from app.models.models import (
@@ -11,10 +11,22 @@ from app.models.models import (
 )
 from app.core.security import hash_password
 
+# Helper to format PostgreSQL URLs for asyncpg if standard postgres:// or postgresql:// is passed
+def get_async_database_url(url: str) -> str:
+    if not url:
+        return "sqlite+aiosqlite:///./aura_jewellery.db"
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return url
+
+db_url = get_async_database_url(settings.DATABASE_URL)
+
 # Setup async SQLAlchemy engine
-connect_args = {"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
+connect_args = {"check_same_thread": False} if "sqlite" in db_url else {}
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    db_url,
     echo=False,
     future=True,
     connect_args=connect_args
@@ -36,6 +48,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 async def seed_initial_data(session: AsyncSession):
+    # Purge any legacy placeholder admin accounts
+    await session.execute(delete(User).where(User.email == "admin@auraatelier.com"))
+    
     # Check if admin already exists
     admin_result = await session.execute(select(User).where(User.email == settings.ADMIN_EMAIL))
     admin_user = admin_result.scalars().first()

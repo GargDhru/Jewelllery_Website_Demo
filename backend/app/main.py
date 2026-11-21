@@ -26,10 +26,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS setup
+# CORS setup - support local development and production domains (including Render subdomains)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all for development & preview
+    allow_origins=settings.get_cors_origins(),
+    allow_origin_regex=r"^https:\/\/.*\.onrender\.com$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

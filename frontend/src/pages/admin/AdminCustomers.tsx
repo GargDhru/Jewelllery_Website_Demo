@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, Mail, Search, ShieldCheck, ShieldX, User, RefreshCw } from 'lucide-react';
+import { Users, Mail, Search, ShieldCheck, ShieldX, User, RefreshCw, Trash2 } from 'lucide-react';
 import { adminApi, api } from '../../services/api';
 import { User as UserType } from '../../types';
 import { useToast } from '../../context/ToastContext';
@@ -9,6 +9,7 @@ export const AdminCustomers: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const toast = useToast();
 
   const fetchCustomers = useCallback(async (q?: string) => {
@@ -52,6 +53,26 @@ export const AdminCustomers: React.FC = () => {
       toast.error(err.response?.data?.detail || 'Failed to update account status');
     } finally {
       setTogglingId(null);
+    }
+  };
+
+  const handleDeleteCustomer = async (customer: UserType) => {
+    if (customer.email === 'dhrugar@gmail.com') {
+      toast.error('Cannot remove master administrator account.');
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to completely remove account ${customer.email}?`)) {
+      return;
+    }
+    try {
+      setDeletingId(customer.id);
+      await adminApi.deleteCustomer(customer.id);
+      setCustomers((prev) => prev.filter((c) => c.id !== customer.id));
+      toast.success(`Account ${customer.email} removed successfully.`);
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to remove account');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -156,24 +177,37 @@ export const AdminCustomers: React.FC = () => {
                       {c.created_at ? new Date(c.created_at).toLocaleDateString('en-IN') : '—'}
                     </td>
                     <td className="py-3.5 px-4">
-                      {c.role !== 'admin' && (
-                        <button
-                          onClick={() => handleToggleStatus(c)}
-                          disabled={togglingId === c.id}
-                          title={c.is_active === false ? 'Activate account' : 'Deactivate account'}
-                          className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-semibold transition-colors disabled:opacity-50 ${
-                            c.is_active === false
-                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
-                              : 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200'
-                          }`}
-                        >
-                          {c.is_active === false ? (
-                            <><ShieldCheck className="w-3 h-3" /> Activate</>
-                          ) : (
-                            <><ShieldX className="w-3 h-3" /> Deactivate</>
-                          )}
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {c.role !== 'admin' && (
+                          <button
+                            onClick={() => handleToggleStatus(c)}
+                            disabled={togglingId === c.id}
+                            title={c.is_active === false ? 'Activate account' : 'Deactivate account'}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-semibold transition-colors disabled:opacity-50 ${
+                              c.is_active === false
+                                ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                                : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                            }`}
+                          >
+                            {c.is_active === false ? (
+                              <><ShieldCheck className="w-3 h-3" /> Activate</>
+                            ) : (
+                              <><ShieldX className="w-3 h-3" /> Deactivate</>
+                            )}
+                          </button>
+                        )}
+                        {c.email !== 'dhrugar@gmail.com' && (
+                          <button
+                            onClick={() => handleDeleteCustomer(c)}
+                            disabled={deletingId === c.id}
+                            title="Remove account completely"
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors disabled:opacity-50"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Remove
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))

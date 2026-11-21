@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # or PostgreSQL / Supabase Postgres if DATABASE_URL is configured
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./aura_jewellery.db")
     
+    # Frontend URL for production CORS (e.g. https://aura-jewellery-frontend.onrender.com)
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "")
+    
     # Supabase (optional direct integration)
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
@@ -38,6 +41,15 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "https://resionaura.vercel.app"
     ]
+
+    def get_cors_origins(self) -> List[str]:
+        origins = list(self.BACKEND_CORS_ORIGINS)
+        if self.FRONTEND_URL:
+            # Strip trailing slash if present
+            clean_url = self.FRONTEND_URL.rstrip("/")
+            if clean_url not in origins:
+                origins.append(clean_url)
+        return origins
 
     class Config:
         env_file = ".env"

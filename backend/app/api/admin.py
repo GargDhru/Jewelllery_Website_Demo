@@ -170,3 +170,22 @@ async def toggle_customer_status(
     db.add(customer)
     await db.commit()
     return {"message": f"Customer account has been {'activated' if customer.is_active else 'deactivated'}", "is_active": customer.is_active}
+
+@router.delete("/customers/{customer_id}")
+async def delete_customer(
+    customer_id: str,
+    admin=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(User).where(User.id == customer_id))
+    user = result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if user.id == admin.id or user.email == settings.ADMIN_EMAIL:
+        raise HTTPException(status_code=400, detail="Cannot delete the active master administrator account")
+
+    await db.delete(user)
+    await db.commit()
+    return {"message": f"Account {user.email} removed successfully"}
+
