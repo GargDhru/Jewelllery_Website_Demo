@@ -722,6 +722,19 @@ async def seed_initial_data(session: AsyncSession):
         await session.commit()
 
 async def init_db():
+    # 1. Initialize and seed Firebase Firestore if configured
+    try:
+        from app.core.firebase import is_firebase_available
+        from app.services.firebase_seeder import seed_firestore_initial_data
+        if is_firebase_available():
+            seed_firestore_initial_data()
+            print("✓ Connected to Firebase Firestore and verified initial luxury seed data.")
+        else:
+            print("ℹ Firebase credentials not provided. Using SQLite database as fallback.")
+    except Exception as e:
+        print(f"Firebase initialization notice: {e}")
+
+    # 2. Initialize SQLite schema & seed as reliable local fallback
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     async with AsyncSessionLocal() as session:

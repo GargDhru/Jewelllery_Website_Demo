@@ -5,6 +5,10 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
 from app.core.database import get_db
+from app.core.firebase import is_firebase_available
+from app.services.firebase_db import (
+    FirestoreProductService, FirestoreCategoryService, DocumentObject
+)
 from app.models.models import Product, ProductImage, ProductVariant, Category
 from app.models.schemas import (
     ProductCreate, ProductUpdate, ProductResponse
@@ -25,25 +29,42 @@ async def list_products(
     is_featured: Optional[bool] = None,
     is_trending: Optional[bool] = None,
     is_new_arrival: Optional[bool] = None,
-    sort: Optional[str] = "featured",  # featured, newest, price_asc, price_desc, rating, bestselling
+    sort: Optional[str] = "featured",
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db)
 ):
+    if is_firebase_available():
+        prods = FirestoreProductService.list_products(
+            category=category,
+            search=search,
+            min_price=min_price,
+            max_price=max_price,
+            color=color,
+            material=material,
+            in_stock=in_stock,
+            is_featured=is_featured,
+            is_trending=is_trending,
+            is_new_arrival=is_new_arrival,
+            sort=sort,
+            skip=skip,
+            limit=limit
+        )
+        return [DocumentObject(p) for p in prods]
+
+    # SQLite fallback
     query = select(Product).options(
         selectinload(Product.images),
         selectinload(Product.variants),
         selectinload(Product.category)
     ).where(Product.is_active == True)
 
-    # Category filter
     if category:
         if category in ("new-arrivals", "new_arrivals"):
             query = query.where(Product.is_new_arrival == True)
         elif category in ("best-sellers", "best_sellers", "bestselling"):
             query = query.where(or_(Product.is_trending == True, Product.is_featured == True, Product.rating >= 4.9))
         else:
-            # Check if category is slug or id
             cat_result = await db.execute(
                 select(Category).where((Category.slug == category) | (Category.id == category) | (Category.name == category))
             )
@@ -51,7 +72,6 @@ async def list_products(
             if cat_obj:
                 query = query.where(Product.category_id == cat_obj.id)
 
-    # Search filter
     if search:
         term = f"%{search.lower()}%"
         query = query.where(
@@ -64,25 +84,18 @@ async def list_products(
             )
         )
 
-    # Price range
     if min_price is not None:
         query = query.where(Product.price >= min_price)
     if max_price is not None:
         query = query.where(Product.price <= max_price)
 
-    # Color filter
     if color:
         query = query.where(func.lower(Product.color).like(f"%{color.lower()}%"))
-
-    # Material filter
     if material:
         query = query.where(func.lower(Product.material).like(f"%{material.lower()}%"))
-
-    # In stock filter
     if in_stock is True:
         query = query.where(Product.stock_quantity > 0)
 
-    # Flags
     if is_featured is not None:
         query = query.where(Product.is_featured == is_featured)
     if is_trending is not None:
@@ -90,7 +103,6 @@ async def list_products(
     if is_new_arrival is not None:
         query = query.where(Product.is_new_arrival == is_new_arrival)
 
-    # Sorting
     if sort == "newest":
         query = query.order_by(desc(Product.created_at))
     elif sort == "price_asc":
@@ -102,16 +114,20 @@ async def list_products(
     elif sort == "bestselling":
         query = query.order_by(desc(Product.reviews_count), desc(Product.rating))
     else:
-        # Default featured
         query = query.order_by(desc(Product.is_featured), desc(Product.rating), desc(Product.created_at))
 
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
-    products = result.scalars().all()
-    return products
+    return result.scalars().all()
 
 @router.get("/{slug_or_id}", response_model=ProductResponse)
 async def get_product(slug_or_id: str, db: AsyncSession = Depends(get_db)):
+    if is_firebase_available():
+        prod = FirestoreProductService.get_product(slug_or_id)
+        if not prod:
+            raise HTTPException(status_code=404, detail="Product not found")
+        return DocumentObject(prod)
+
     query = select(Product).options(
         selectinload(Product.images),
         selectinload(Product.variants),
@@ -131,7 +147,14 @@ async def create_product(
     admin=Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    # Verify slug / sku uniqueness
+    if is_firebase_available():
+        existing = FirestoreProductService.get_product(prod_in.slug) or FirestoreProductService.get_product(prod_in.sku)
+        if existing:
+            raise HTTPException(status_code=400, detail="Product with this SKU or slug already exists")
+        data = prod_in.dict()
+        created = FirestoreProductService.create_product(data)
+        return DocumentObject(created)
+
     existing = await db.execute(select(Product).where((Product.slug == prod_in.slug) | (Product.sku == prod_in.sku)))
     if existing.scalars().first():
         raise HTTPException(status_code=400, detail="Product with this SKU or slug already exists")
@@ -141,7 +164,6 @@ async def create_product(
     db.add(product)
     await db.flush()
 
-    # Add images
     for idx, img_url in enumerate(prod_in.images):
         img = ProductImage(
             product_id=product.id,
@@ -152,7 +174,6 @@ async def create_product(
         )
         db.add(img)
 
-    # Add variants
     for v in prod_in.variants:
         var = ProductVariant(
             product_id=product.id,
@@ -168,7 +189,6 @@ async def create_product(
 
     await db.commit()
     
-    # Reload with relations
     reloaded = await db.execute(
         select(Product).options(
             selectinload(Product.images),
@@ -185,6 +205,13 @@ async def update_product(
     admin=Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    if is_firebase_available():
+        data = prod_in.dict(exclude_unset=True)
+        updated = FirestoreProductService.update_product(prod_id, data)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Product not found")
+        return DocumentObject(updated)
+
     result = await db.execute(
         select(Product).options(
             selectinload(Product.images),
@@ -201,7 +228,6 @@ async def update_product(
         setattr(product, field, val)
 
     if prod_in.images is not None:
-        # replace images
         old_imgs = await db.execute(select(ProductImage).where(ProductImage.product_id == prod_id))
         for img in old_imgs.scalars().all():
             await db.delete(img)
@@ -226,6 +252,12 @@ async def delete_product(
     admin=Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    if is_firebase_available():
+        success = FirestoreProductService.delete_product(prod_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Product not found")
+        return {"message": "Product deleted successfully"}
+
     result = await db.execute(select(Product).where(Product.id == prod_id))
     product = result.scalars().first()
     if not product:
@@ -233,4 +265,3 @@ async def delete_product(
     await db.delete(product)
     await db.commit()
     return {"message": "Product deleted successfully"}
-

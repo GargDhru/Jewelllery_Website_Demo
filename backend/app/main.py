@@ -55,10 +55,12 @@ app.include_router(admin.router, prefix=settings.API_V1_STR)
 
 @app.get("/api/health")
 async def health_check():
+    from app.core.firebase import is_firebase_available
     return {
         "status": "healthy",
         "service": settings.PROJECT_NAME,
-        "version": settings.VERSION
+        "version": settings.VERSION,
+        "database": "firebase_firestore" if is_firebase_available() else "sqlite_fallback"
     }
 
 # ── Serve built React frontend ─────────────────────────────────────────────────

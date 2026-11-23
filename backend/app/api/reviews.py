@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from app.core.database import get_db
+from app.core.firebase import is_firebase_available
+from app.services.firebase_db import FirestoreReviewService, FirestoreProductService, DocumentObject
 from app.models.models import Review, Product, User
 from app.models.schemas import ReviewCreate, ReviewResponse
 from app.api.deps import get_current_user_optional, get_current_admin
@@ -29,6 +31,10 @@ async def recalculate_product_rating(product_id: str, db: AsyncSession):
 
 @router.get("/product/{product_id}", response_model=List[ReviewResponse])
 async def get_product_reviews(product_id: str, db: AsyncSession = Depends(get_db)):
+    if is_firebase_available():
+        reviews = FirestoreReviewService.list_reviews_by_product(product_id)
+        return [DocumentObject(r) for r in reviews]
+
     result = await db.execute(
         select(Review)
         .where(Review.product_id == product_id, Review.status == "approved")
@@ -39,86 +45,75 @@ async def get_product_reviews(product_id: str, db: AsyncSession = Depends(get_db
 @router.post("", response_model=ReviewResponse, status_code=status.HTTP_201_CREATED)
 async def submit_review(
     review_in: ReviewCreate,
-    current_user: Optional[User] = Depends(get_current_user_optional),
+    current_user: Optional[Any] = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db)
 ):
+    customer_name = review_in.customer_name
+    user_name = getattr(current_user, "full_name", None) or (current_user.get("full_name") if hasattr(current_user, "get") else None)
+    user_id = getattr(current_user, "id", None) or (current_user.get("id") if hasattr(current_user, "get") else None)
+    if user_name:
+        customer_name = user_name
+    if not customer_name:
+        customer_name = "Discerning Patron"
+
+    if is_firebase_available():
+        prod = FirestoreProductService.get_product(review_in.product_id)
+        if not prod:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        r_data = {
+            "product_id": review_in.product_id,
+            "user_id": user_id,
+            "customer_name": customer_name,
+            "rating": review_in.rating,
+            "title": review_in.title,
+            "comment": review_in.comment,
+            "verified_purchase": True,
+            "status": "approved"
+        }
+        created = FirestoreReviewService.create_review(r_data)
+        return DocumentObject(created)
+
     prod_res = await db.execute(select(Product).where(Product.id == review_in.product_id))
     prod = prod_res.scalars().first()
     if not prod:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    customer_name = review_in.customer_name
-    if current_user and current_user.full_name:
-        customer_name = current_user.full_name
-    if not customer_name:
-        customer_name = "Discerning Patron"
-
     review = Review(
         product_id=review_in.product_id,
-        user_id=current_user.id if current_user else None,
+        user_id=user_id,
         customer_name=customer_name,
         rating=review_in.rating,
         title=review_in.title,
         comment=review_in.comment,
         verified_purchase=True,
-        status="approved"  # Auto-approve for instant delight, can be moderated by admin
+        status="approved"
     )
     db.add(review)
     await db.commit()
     await db.refresh(review)
 
-    # Recalculate rating
     await recalculate_product_rating(review_in.product_id, db)
     return review
 
-@router.get("/admin/all", response_model=List[ReviewResponse])
-async def admin_list_reviews(
-    status_filter: Optional[str] = None,
-    admin=Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    query = select(Review).order_by(desc(Review.created_at))
-    if status_filter:
-        query = query.where(Review.status == status_filter)
-    result = await db.execute(query)
-    return result.scalars().all()
-
-@router.put("/admin/{review_id}/status")
-async def admin_moderate_review(
-    review_id: str,
-    new_status: str,
-    admin=Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    if new_status not in ["pending", "approved", "rejected"]:
-        raise HTTPException(status_code=400, detail="Invalid status")
-
-    result = await db.execute(select(Review).where(Review.id == review_id))
-    review = result.scalars().first()
-    if not review:
-        raise HTTPException(status_code=404, detail="Review not found")
-
-    review.status = new_status
-    db.add(review)
-    await db.commit()
-
-    await recalculate_product_rating(review.product_id, db)
-    return {"message": f"Review marked as {new_status}"}
-
-@router.delete("/admin/{review_id}")
-async def admin_delete_review(
+@router.delete("/{review_id}")
+async def delete_review(
     review_id: str,
     admin=Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    if is_firebase_available():
+        success = FirestoreReviewService.delete_review(review_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Review not found")
+        return {"message": "Review deleted successfully"}
+
     result = await db.execute(select(Review).where(Review.id == review_id))
-    review = result.scalars().first()
-    if not review:
+    rev = result.scalars().first()
+    if not rev:
         raise HTTPException(status_code=404, detail="Review not found")
-    
-    prod_id = review.product_id
-    await db.delete(review)
+    pid = rev.product_id
+    await db.delete(rev)
     await db.commit()
-    await recalculate_product_rating(prod_id, db)
+    await recalculate_product_rating(pid, db)
     return {"message": "Review deleted successfully"}
-

@@ -27,3 +27,6 @@ services:
         value: rzp_test_luxurydemo123
       - key: RAZORPAY_KEY_SECRET
         value: secret_luxury_razorpay_mock_key
+      # Firebase Cloud Firestore (Paste your serviceAccountKey.json content here in Render Dashboard)
+      - key: FIREBASE_SERVICE_ACCOUNT_KEY
+        sync: false

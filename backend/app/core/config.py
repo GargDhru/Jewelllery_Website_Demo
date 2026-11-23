@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     # or PostgreSQL / Supabase Postgres if DATABASE_URL is configured
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./aura_jewellery.db")
     
+    # Firebase Firestore Cloud Database
+    FIREBASE_SERVICE_ACCOUNT_KEY: str = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY", "")
+    FIREBASE_CREDENTIALS_PATH: str = os.getenv("FIREBASE_CREDENTIALS_PATH", "serviceAccountKey.json")
+    FIREBASE_PROJECT_ID: str = os.getenv("FIREBASE_PROJECT_ID", "")
+    USE_FIREBASE: bool = os.getenv("USE_FIREBASE", "true").lower() in ("true", "1", "yes")
+    
     # Frontend URL for production CORS (e.g. https://aura-jewellery-frontend.onrender.com)
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "")
     

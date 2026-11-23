@@ -4,6 +4,8 @@ from sqlalchemy import select
 from typing import List
 
 from app.core.database import get_db
+from app.core.firebase import is_firebase_available
+from app.services.firebase_db import FirestoreCategoryService, DocumentObject
 from app.models.models import Category
 from app.models.schemas import CategoryCreate, CategoryUpdate, CategoryResponse
 from app.api.deps import get_current_admin
@@ -15,6 +17,10 @@ async def get_categories(
     include_inactive: bool = False,
     db: AsyncSession = Depends(get_db)
 ):
+    if is_firebase_available():
+        cats = FirestoreCategoryService.list_categories(include_inactive)
+        return [DocumentObject(c) for c in cats]
+
     query = select(Category).order_by(Category.display_order.asc(), Category.name.asc())
     if not include_inactive:
         query = query.where(Category.is_active == True)
@@ -23,6 +29,12 @@ async def get_categories(
 
 @router.get("/{slug_or_id}", response_model=CategoryResponse)
 async def get_category(slug_or_id: str, db: AsyncSession = Depends(get_db)):
+    if is_firebase_available():
+        cat = FirestoreCategoryService.get_category(slug_or_id)
+        if not cat:
+            raise HTTPException(status_code=404, detail="Category not found")
+        return DocumentObject(cat)
+
     result = await db.execute(
         select(Category).where(
             (Category.slug == slug_or_id) | (Category.id == slug_or_id)
@@ -39,6 +51,13 @@ async def create_category(
     admin=Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    if is_firebase_available():
+        existing = FirestoreCategoryService.get_category(cat_in.slug) or FirestoreCategoryService.get_category(cat_in.name)
+        if existing:
+            raise HTTPException(status_code=400, detail="Category with this name or slug already exists")
+        created = FirestoreCategoryService.create_category(cat_in.dict())
+        return DocumentObject(created)
+
     existing = await db.execute(select(Category).where((Category.name == cat_in.name) | (Category.slug == cat_in.slug)))
     if existing.scalars().first():
         raise HTTPException(status_code=400, detail="Category with this name or slug already exists")
@@ -56,6 +75,12 @@ async def update_category(
     admin=Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    if is_firebase_available():
+        updated = FirestoreCategoryService.update_category(cat_id, cat_in.dict(exclude_unset=True))
+        if not updated:
+            raise HTTPException(status_code=404, detail="Category not found")
+        return DocumentObject(updated)
+
     result = await db.execute(select(Category).where(Category.id == cat_id))
     cat = result.scalars().first()
     if not cat:
@@ -76,6 +101,12 @@ async def delete_category(
     admin=Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    if is_firebase_available():
+        success = FirestoreCategoryService.delete_category(cat_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Category not found")
+        return {"message": "Category deleted successfully"}
+
     result = await db.execute(select(Category).where(Category.id == cat_id))
     cat = result.scalars().first()
     if not cat:
@@ -83,4 +114,3 @@ async def delete_category(
     await db.delete(cat)
     await db.commit()
     return {"message": "Category deleted successfully"}
-
